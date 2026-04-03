@@ -21,16 +21,24 @@ void Motors_Start(void) {
 void Motors_Update(MotorAngles_t* cmd) {
     if (!cmd->is_valid) return;
 
-    // 1. Sync the global tracker to reality
     for (int i = 0; i < 5; i++) {
-        actual_motor_angles[i] = cmd->angles[i];
-    }
+        // Check if this specific motor's angle has changed
+        if (actual_motor_angles[i] != cmd->angles[i]) {
 
-    // 2. Convert 0-180 degrees to 500-2500 microsecond PWM pulse
-    // (Assuming ARR is 20000 and prescaler is set for 1us ticks)
-    TIM3->CCR1  = 500 + (uint32_t)((actual_motor_angles[0] / 180.0f) * 2000.0f);
-    TIM1->CCR1  = 500 + (uint32_t)((actual_motor_angles[1] / 180.0f) * 2000.0f);
-    TIM12->CCR1 = 500 + (uint32_t)((actual_motor_angles[2] / 180.0f) * 2000.0f);
-    TIM2->CCR1  = 500 + (uint32_t)((actual_motor_angles[3] / 180.0f) * 2000.0f);
-    TIM5->CCR4  = 500 + (uint32_t)((actual_motor_angles[4] / 180.0f) * 2000.0f);
+            // 1. Update the global tracking array
+            actual_motor_angles[i] = cmd->angles[i];
+
+            // 2. Calculate the new PWM pulse width just for this motor
+            uint32_t pulse_width = 500 + (uint32_t)((actual_motor_angles[i] / 180.0f) * 2000.0f);
+
+            // 3. Update ONLY the corresponding hardware register
+            switch (i) {
+                case 0: TIM3->CCR1  = pulse_width; break;
+                case 1: TIM1->CCR1  = pulse_width; break;
+                case 2: TIM12->CCR1 = pulse_width; break;
+                case 3: TIM2->CCR1  = pulse_width; break;
+                case 4: TIM5->CCR4  = pulse_width; break;
+            }
+        }
+    }
 }
