@@ -1,0 +1,23 @@
+# 1. STM32CubeIDE Build Folders (Binaries & compiled code)
+Debug/
+Release/
+build/
+
+# 2. Local IDE Settings & User-Specific Configs
+.settings/
+*.launch
+.mxproject
+
+# 3. Compiled Object files, Binaries, and Maps
+*.o
+*.elf
+*.bin
+*.hex
+*.map
+*.su
+*.list
+*.elf.launch
+
+# 4. OS Generated Files
+.DS_Store
+Thumbs.db
