@@ -63,6 +63,8 @@ osSemaphoreId_t spiDmaSemaphore;
 
 MotorAngles_t latest_vision_data = {0};
 
+uint16_t internal_cam_buffer[76800];
+
 osThreadId_t visionTaskHandle;
 const osThreadAttr_t visionTask_attributes = {
   .name = "visionTask",
@@ -224,6 +226,77 @@ void StartDefaultTask(void *argument)
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
 
+//void StartVisionTask(void *argument) {
+//    uint8_t out_spi_val = 0;
+//    LCD_FillScreen(COLOR_BLACK);
+//    UI_DrawStringCentered(0, 100, 480, 20, "INITIALIZING CAMERA...", COLOR_WHITE, COLOR_BLACK, 2);
+//
+//    if (Camera_Init(&out_spi_val) != 0) {
+//        LCD_FillScreen(COLOR_RED);
+//        UI_DrawStringCentered(0, 120, 480, 20, "CAMERA INIT FAILED", COLOR_WHITE, COLOR_RED, 2);
+//        for(;;) { osDelay(1000); }
+//    }
+//
+//    // Structure to hold our CV computation output
+//    MotorAngles_t vision_angles = {0};
+//
+//    // 1. Set up our local alternating pointers
+//	uint16_t* dma_write_buffer = camBuffer_A;
+//	uint16_t* cpu_read_buffer = camBuffer_B;
+//
+//	// ==========================================================
+//	// BOOTSTRAP: We must capture one initial frame before the loop
+//	// so the CPU has something to process on the very first iteration.
+//	// ==========================================================
+//	Camera_WriteReg(0x04, 0x01);
+//	Camera_WriteReg(0x04, 0x02);
+//	while ((Camera_ReadReg(0x41) & 0x08) == 0) { osDelay(1); }
+//
+//	Camera_Start_DMA_Capture(cpu_read_buffer);
+//	osSemaphoreAcquire(spiDmaSemaphore, osWaitForever); // Wait for Bootstrap to finish
+//
+//	// ==========================================================
+//	// THE PARALLEL PIPELINE
+//	// ==========================================================
+//	for(;;) {
+//		// 1. TRIGGER THE NEXT FRAME (Runs entirely in the background)
+//		Camera_WriteReg(0x04, 0x01);
+//		Camera_WriteReg(0x04, 0x02);
+//		while ((Camera_ReadReg(0x41) & 0x08) == 0) { osDelay(1); }
+//
+//		Camera_Start_DMA_Capture(dma_write_buffer); // Returns instantly!
+//
+//		// 2. PROCESS CURRENT FRAME (CPU runs math WHILE DMA downloads)
+//		// Give the UI the stable image that finished downloading last loop
+//		stable_camBuffer = cpu_read_buffer;
+//		SystemMode_t current_mode = UI_Get_Requested_Mode();
+//
+//		// Run heavy math. The DMA cannot corrupt this buffer!
+//		Compute_Motor_Angles(current_mode, cpu_read_buffer, debug_camBuffer, &vision_angles);
+//		latest_vision_data = vision_angles;
+//
+//		if (vision_angles.is_valid &&
+//		   (current_mode == MODE_TRACKING || current_mode == MODE_AUTO || current_mode == MODE_DEBUG)) {
+//			osMessageQueuePut(motorCmdQueueHandle, &vision_angles, 0, 0);
+//		}
+//
+//
+//		// 3. SYNC POINT (Wait for the background DMA transfer to finish)
+//		// If your math took 90ms and the DMA only took 10ms, this semaphore
+//		// will already be available and the task will fly past this line instantly!
+//		osSemaphoreAcquire(spiDmaSemaphore, osWaitForever);
+//
+//		 4. SWAP BUFFERS
+//		uint16_t* temp = cpu_read_buffer;
+//		cpu_read_buffer = dma_write_buffer;
+//		dma_write_buffer = temp;
+//
+//		osDelay(30);
+//
+//		// No osDelay() needed here. The semaphore perfectly syncs the loop to the camera speed.
+//	}
+//}
+
 void StartVisionTask(void *argument) {
     uint8_t out_spi_val = 0;
     LCD_FillScreen(COLOR_BLACK);
@@ -235,61 +308,41 @@ void StartVisionTask(void *argument) {
         for(;;) { osDelay(1000); }
     }
 
-    // Structure to hold our CV computation output
     MotorAngles_t vision_angles = {0};
 
-    // 1. Set up our local alternating pointers
-	uint16_t* dma_write_buffer = camBuffer_A;
-	uint16_t* cpu_read_buffer = camBuffer_B;
+    // ==========================================================
+    // THE SINGLE BUFFER PIPELINE (Internal RAM Test)
+    // ==========================================================
+    for(;;) {
+        // 1. TRIGGER THE NEXT FRAME
+        Camera_WriteReg(0x04, 0x01);
+        Camera_WriteReg(0x04, 0x02);
+        while ((Camera_ReadReg(0x41) & 0x08) == 0) { osDelay(1); }
 
-	// ==========================================================
-	// BOOTSTRAP: We must capture one initial frame before the loop
-	// so the CPU has something to process on the very first iteration.
-	// ==========================================================
-	Camera_WriteReg(0x04, 0x01);
-	Camera_WriteReg(0x04, 0x02);
-	while ((Camera_ReadReg(0x41) & 0x08) == 0) { osDelay(1); }
+        // 2. DOWNLOAD DIRECTLY TO INTERNAL RAM
+        Camera_Start_DMA_Capture(internal_cam_buffer);
 
-	Camera_Start_DMA_Capture(cpu_read_buffer);
-	osSemaphoreAcquire(spiDmaSemaphore, osWaitForever); // Wait for Bootstrap to finish
+        // 3. WAIT FOR DOWNLOAD TO FINISH (The CPU sleeps here)
+        osSemaphoreAcquire(spiDmaSemaphore, osWaitForever);
 
-	// ==========================================================
-	// THE PARALLEL PIPELINE
-	// ==========================================================
-	for(;;) {
-		// 1. TRIGGER THE NEXT FRAME (Runs entirely in the background)
-		Camera_WriteReg(0x04, 0x01);
-		Camera_WriteReg(0x04, 0x02);
-		while ((Camera_ReadReg(0x41) & 0x08) == 0) { osDelay(1); }
+        // 4. PROCESS THE COMPLETED FRAME
+        // Point the UI to this internal buffer so you can still see it
+        stable_camBuffer = internal_cam_buffer;
+        SystemMode_t current_mode = UI_Get_Requested_Mode();
 
-		Camera_Start_DMA_Capture(dma_write_buffer); // Returns instantly!
+        // Run heavy math
+        Compute_Motor_Angles(current_mode, internal_cam_buffer, debug_camBuffer, &vision_angles);
+        latest_vision_data = vision_angles;
 
-		// 2. PROCESS CURRENT FRAME (CPU runs math WHILE DMA downloads)
-		// Give the UI the stable image that finished downloading last loop
-		stable_camBuffer = cpu_read_buffer;
-		SystemMode_t current_mode = UI_Get_Requested_Mode();
+        // 5. SEND MOTOR COMMANDS
+        if (vision_angles.is_valid &&
+           (current_mode == MODE_TRACKING || current_mode == MODE_AUTO || current_mode == MODE_DEBUG)) {
+            osMessageQueuePut(motorCmdQueueHandle, &vision_angles, 0, 0);
+        }
 
-		// Run heavy math. The DMA cannot corrupt this buffer!
-		Compute_Motor_Angles(current_mode, cpu_read_buffer, debug_camBuffer, &vision_angles);
-		latest_vision_data = vision_angles;
-
-		if (vision_angles.is_valid &&
-		   (current_mode == MODE_TRACKING || current_mode == MODE_AUTO || current_mode == MODE_DEBUG)) {
-			osMessageQueuePut(motorCmdQueueHandle, &vision_angles, 0, 0);
-		}
-
-		// 3. SYNC POINT (Wait for the background DMA transfer to finish)
-		// If your math took 90ms and the DMA only took 10ms, this semaphore
-		// will already be available and the task will fly past this line instantly!
-		osSemaphoreAcquire(spiDmaSemaphore, osWaitForever);
-
-		// 4. SWAP BUFFERS
-		uint16_t* temp = cpu_read_buffer;
-		cpu_read_buffer = dma_write_buffer;
-		dma_write_buffer = temp;
-
-		// No osDelay() needed here. The semaphore perfectly syncs the loop to the camera speed.
-	}
+        // Add a tiny delay to let the UI Task breathe since we lost parallel processing
+        osDelay(10);
+    }
 }
 
 void StartMotorTask(void *argument) {
@@ -302,7 +355,6 @@ void StartMotorTask(void *argument) {
 //		reset_cmd.angles[i] = 90.0f;
 //	}
 //	osMessageQueuePut(motorCmdQueueHandle, &reset_cmd, 0, 0);
-
 
     for(;;) {
         // Blocks safely until the Vision Task sends new data
