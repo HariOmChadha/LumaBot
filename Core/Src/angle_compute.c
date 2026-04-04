@@ -2,7 +2,9 @@
 #include "stm32f7xx_hal.h"
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 #include "cmsis_os.h"
+#include "ei_inference.h"
 
 extern osMessageQueueId_t motorCmdQueueHandle;
 extern float actual_motor_angles[5]; // Pull in the physical reality tracker
@@ -149,6 +151,167 @@ void Track_Load_Preset(uint8_t preset_slot) {
 }
 
 /* ========================================================================= */
+/* CCD INVERSE KINEMATICS                                                    */
+/* ========================================================================= */
+
+/* --- Arm geometry from URDF (origin xyz and rpy for each joint) --- */
+static const float IK_JOINT_XYZ[5][3] = {
+    { 0.000f,  0.000f,  0.000f },   /* joint1 */
+    { 0.000f,  0.000f,  0.044f },   /* joint2 */
+    {-0.140f,  0.000f,  0.000f },   /* joint3 */
+    { 0.105f, -0.005f, -0.014f },   /* joint4 */
+    { 0.016f, -0.006f,  0.029f },   /* joint5 */
+};
+static const float IK_JOINT_RPY[5][3] = {  /* [roll, pitch, yaw] */
+    { 0.0f,      0.0f,      0.0f     },
+    { 0.0f,      1.5707f,   0.0f     },
+    { 0.0f,      0.0f,      1.5707f  },
+    {-1.5707f,  -1.5707f,  -1.5707f  },
+    { 1.5707f,  -1.5707f,   1.5707f  },
+};
+static const float IK_EE_XYZ[3]    = { 0.05f, 0.0f, 0.0f };
+static const float IK_Q_LOWER[5]   = {-1.5707f, -1.5707f, -1.5707f, -1.5707f, -1.5707f};
+static const float IK_Q_UPPER[5]   = { 1.5707f,  1.5707f,  1.5707f,  1.5707f,  1.5707f};
+
+#define CCD_MAX_ITER 20
+#define CCD_TOL      0.005f   /* 5 mm position tolerance */
+
+/* Persistent joint angles — warm-start each CCD call from last solution */
+static float ik_q[5] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+
+/* 4x4 row-major homogeneous transform */
+typedef struct { float m[4][4]; } IK_Mat4_t;
+
+static IK_Mat4_t ik_mat4_identity(void) {
+    IK_Mat4_t r = {{{ 1,0,0,0 },{ 0,1,0,0 },{ 0,0,1,0 },{ 0,0,0,1 }}};
+    return r;
+}
+
+static IK_Mat4_t ik_mat4_mul(const IK_Mat4_t *a, const IK_Mat4_t *b) {
+    IK_Mat4_t r;
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 4; j++) {
+            r.m[i][j] = 0.0f;
+            for (int k = 0; k < 4; k++)
+                r.m[i][j] += a->m[i][k] * b->m[k][j];
+        }
+    return r;
+}
+
+/* Build T = Trans(x,y,z) * Rz(yaw) * Ry(pitch) * Rx(roll)  (URDF RPY convention) */
+static IK_Mat4_t ik_mat4_from_origin(float x, float y, float z,
+                                     float roll, float pitch, float yaw) {
+    float cr = cosf(roll),  sr = sinf(roll);
+    float cp = cosf(pitch), sp = sinf(pitch);
+    float cy = cosf(yaw),   sy = sinf(yaw);
+    IK_Mat4_t r;
+    r.m[0][0] = cy*cp;              r.m[0][1] = cy*sp*sr - sy*cr;  r.m[0][2] = cy*sp*cr + sy*sr;  r.m[0][3] = x;
+    r.m[1][0] = sy*cp;              r.m[1][1] = sy*sp*sr + cy*cr;  r.m[1][2] = sy*sp*cr - cy*sr;  r.m[1][3] = y;
+    r.m[2][0] = -sp;                r.m[2][1] = cp*sr;              r.m[2][2] = cp*cr;              r.m[2][3] = z;
+    r.m[3][0] = 0.0f;               r.m[3][1] = 0.0f;               r.m[3][2] = 0.0f;               r.m[3][3] = 1.0f;
+    return r;
+}
+
+static IK_Mat4_t ik_mat4_rotz(float a) {
+    float c = cosf(a), s = sinf(a);
+    IK_Mat4_t r = {{{ c,-s,0,0 },{ s,c,0,0 },{ 0,0,1,0 },{ 0,0,0,1 }}};
+    return r;
+}
+
+static float ik_dot3(const float a[3], const float b[3]) {
+    return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+}
+static void ik_cross3(const float a[3], const float b[3], float out[3]) {
+    out[0] = a[1]*b[2] - a[2]*b[1];
+    out[1] = a[2]*b[0] - a[0]*b[2];
+    out[2] = a[0]*b[1] - a[1]*b[0];
+}
+
+/* Forward kinematics.
+ * joint_pos[i]  = world-space pivot position of joint i (before q[i] rotation)
+ * joint_axis[i] = world-space Z rotation axis of joint i (before q[i] rotation)
+ * ee_pos        = world-space end-effector position */
+static void IK_FK(const float q[5],
+                  float joint_pos[5][3],
+                  float joint_axis[5][3],
+                  float ee_pos[3])
+{
+    IK_Mat4_t T = ik_mat4_identity();
+    for (int i = 0; i < 5; i++) {
+        IK_Mat4_t off = ik_mat4_from_origin(
+            IK_JOINT_XYZ[i][0], IK_JOINT_XYZ[i][1], IK_JOINT_XYZ[i][2],
+            IK_JOINT_RPY[i][0], IK_JOINT_RPY[i][1], IK_JOINT_RPY[i][2]);
+        T = ik_mat4_mul(&T, &off);
+
+        /* Record pivot position and Z-axis (before q[i] is applied) */
+        joint_pos[i][0]  = T.m[0][3];
+        joint_pos[i][1]  = T.m[1][3];
+        joint_pos[i][2]  = T.m[2][3];
+        joint_axis[i][0] = T.m[0][2];   /* column 2 = Z axis */
+        joint_axis[i][1] = T.m[1][2];
+        joint_axis[i][2] = T.m[2][2];
+
+        IK_Mat4_t Rz = ik_mat4_rotz(q[i]);
+        T = ik_mat4_mul(&T, &Rz);
+    }
+    /* End-effector offset (fixed joint, pure translation in link5 frame) */
+    ee_pos[0] = T.m[0][3] + T.m[0][0]*IK_EE_XYZ[0] + T.m[0][1]*IK_EE_XYZ[1] + T.m[0][2]*IK_EE_XYZ[2];
+    ee_pos[1] = T.m[1][3] + T.m[1][0]*IK_EE_XYZ[0] + T.m[1][1]*IK_EE_XYZ[1] + T.m[1][2]*IK_EE_XYZ[2];
+    ee_pos[2] = T.m[2][3] + T.m[2][0]*IK_EE_XYZ[0] + T.m[2][1]*IK_EE_XYZ[1] + T.m[2][2]*IK_EE_XYZ[2];
+}
+
+/* CCD solver — updates global ik_q[] to move the end effector to target.
+ * Warm-starts from the previous solution for smooth real-time tracking. */
+static void IK_CCD_Solve(const float target[3]) {
+    float joint_pos[5][3];
+    float joint_axis[5][3];
+    float ee_pos[3];
+
+    for (int iter = 0; iter < CCD_MAX_ITER; iter++) {
+        IK_FK(ik_q, joint_pos, joint_axis, ee_pos);
+
+        float dx = ee_pos[0] - target[0];
+        float dy = ee_pos[1] - target[1];
+        float dz = ee_pos[2] - target[2];
+        if (dx*dx + dy*dy + dz*dz < CCD_TOL*CCD_TOL) break;
+
+        /* Sweep joints from end to base */
+        for (int i = 4; i >= 0; i--) {
+            IK_FK(ik_q, joint_pos, joint_axis, ee_pos);
+
+            float r_ee[3]  = { ee_pos[0] - joint_pos[i][0],
+                                ee_pos[1] - joint_pos[i][1],
+                                ee_pos[2] - joint_pos[i][2] };
+            float r_tgt[3] = { target[0] - joint_pos[i][0],
+                                target[1] - joint_pos[i][1],
+                                target[2] - joint_pos[i][2] };
+
+            /* Project both vectors onto the plane perpendicular to the joint axis */
+            const float *ax = joint_axis[i];
+            float d_ee  = ik_dot3(r_ee,  ax);
+            float d_tgt = ik_dot3(r_tgt, ax);
+            float perp_ee[3]  = { r_ee[0]  - d_ee *ax[0], r_ee[1]  - d_ee *ax[1], r_ee[2]  - d_ee *ax[2] };
+            float perp_tgt[3] = { r_tgt[0] - d_tgt*ax[0], r_tgt[1] - d_tgt*ax[1], r_tgt[2] - d_tgt*ax[2] };
+
+            float len_ee  = sqrtf(ik_dot3(perp_ee,  perp_ee));
+            float len_tgt = sqrtf(ik_dot3(perp_tgt, perp_tgt));
+            if (len_ee < 1e-6f || len_tgt < 1e-6f) continue;
+
+            /* Signed angle from r_ee_perp to r_tgt_perp around axis */
+            float cross[3];
+            ik_cross3(perp_ee, perp_tgt, cross);
+            float sin_a = ik_dot3(cross, ax) / (len_ee * len_tgt);
+            float cos_a = ik_dot3(perp_ee, perp_tgt) / (len_ee * len_tgt);
+            float angle = atan2f(sin_a, cos_a);
+
+            ik_q[i] += angle;
+            if (ik_q[i] < IK_Q_LOWER[i]) ik_q[i] = IK_Q_LOWER[i];
+            if (ik_q[i] > IK_Q_UPPER[i]) ik_q[i] = IK_Q_UPPER[i];
+        }
+    }
+}
+
+/* ========================================================================= */
 /* CV SIMULATION HELPERS                                                     */
 /* ========================================================================= */
 static void Draw_CV_Bounding_Box(uint16_t* buffer, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color) {
@@ -168,49 +331,56 @@ static void Draw_CV_Bounding_Box(uint16_t* buffer, uint16_t x, uint16_t y, uint1
     }
 }
 
-static void CV_Pipeline(uint16_t* target_buffer, MotorAngles_t* target_angles, SystemMode_t current_mode) {
-    osDelay(10 + (rand() % 40));
+/* -------------------------------------------------------------------------
+ * High-level controller: centroid (pixels) → desired EE position (metres)
+ *
+ * Input:  cx, cy  — hand centroid in the 320x240 camera image
+ * Output: ee_target[3] — desired {x, y, z} in the arm's base frame (metres)
+ *
+ * Coordinate convention (tune to match your camera mounting):
+ *   x  lateral   cx=  0 → -0.15 m (left),  cx=320 → +0.15 m (right)
+ *   y  depth      fixed at 0.25 m in front of the arm base
+ *   z  vertical   cy=  0 → +0.25 m (top),   cy=240 → +0.05 m (bottom)
+ * ------------------------------------------------------------------------- */
+static void Hand_Centroid_To_EE_Target(float cx, float cy, float ee_target[3]) {
+    ee_target[0] = (cx / 320.0f - 0.5f) * 0.30f;
+    ee_target[1] = 0.25f;
+    ee_target[2] = (1.0f - cy / 240.0f) * 0.20f + 0.05f;
+}
 
-    static int hold_frames = 0;
-    static int16_t base_x = 140, base_y = 100, base_w = 40, base_h = 40;
-    static float base_angles[5] = {90.0f, 90.0f, 90.0f, 90.0f, 90.0f};
-
-    if (hold_frames <= 0) {
-        base_w = 40 + (rand() % 40);
-        base_h = 40 + (rand() % 40);
-        base_x = rand() % (320 - base_w);
-        base_y = rand() % (240 - base_h);
-        for (int i = 0; i < 5; i++) base_angles[i] = (float)(rand() % 181);
-        hold_frames = 20 + (rand() % 60);
-    } else {
-        hold_frames--;
-    }
-
-    int16_t noisy_x = base_x + ((rand() % 5) - 2);
-    int16_t noisy_y = base_y + ((rand() % 5) - 2);
-    int16_t noisy_w = base_w + ((rand() % 5) - 2);
-    int16_t noisy_h = base_h + ((rand() % 5) - 2);
-
-    if (noisy_w < 10) noisy_w = 10;
-    if (noisy_h < 10) noisy_h = 10;
-    if (noisy_x < 0) noisy_x = 0;
-    if (noisy_y < 0) noisy_y = 0;
-    if (noisy_x + noisy_w > 320) noisy_x = 320 - noisy_w;
-    if (noisy_y + noisy_h > 240) noisy_y = 240 - noisy_h;
-
-    target_angles->box_x = noisy_x;
-    target_angles->box_y = noisy_y;
-    target_angles->box_w = noisy_w;
-    target_angles->box_h = noisy_h;
-
+/* -------------------------------------------------------------------------
+ * IK + motor write: solve for ee_target and populate output_angles
+ * ------------------------------------------------------------------------- */
+static void IK_Set_Angles(const float ee_target[3], MotorAngles_t *output_angles) {
+    IK_CCD_Solve(ee_target);
     for (int i = 0; i < 5; i++) {
-        float noise = ((float)(rand() % 51) / 10.0f) - 2.5f;
-        float noisy_angle = base_angles[i] + noise;
-        if (noisy_angle < 0.0f) noisy_angle = 0.0f;
-        if (noisy_angle > 180.0f) noisy_angle = 180.0f;
-        target_angles->angles[i] = noisy_angle;
+        output_angles->angles[i] = ik_q[i] * (180.0f / 3.14159265f) + 90.0f;
     }
-    target_angles->is_valid = 1;
+    output_angles->is_valid = 1;
+}
+
+static void CV_Pipeline(uint16_t* target_buffer, MotorAngles_t* target_angles, SystemMode_t current_mode) {
+    EI_Detection_t det = EI_Run(target_buffer);
+
+    if (!det.detected) {
+        target_angles->is_valid = 0;
+        return;
+    }
+
+    /* FOMO centroid: cell top-left + half cell size */
+    float cx = det.box_x + det.box_w / 2.0f;
+    float cy = det.box_y + det.box_h / 2.0f;
+
+    /* Draw a fixed-size box centred on the FOMO centroid for the UI overlay */
+    #define CENTROID_BOX_HALF 15
+    target_angles->box_x = (uint16_t)(cx > CENTROID_BOX_HALF ? cx - CENTROID_BOX_HALF : 0);
+    target_angles->box_y = (uint16_t)(cy > CENTROID_BOX_HALF ? cy - CENTROID_BOX_HALF : 0);
+    target_angles->box_w = 2 * CENTROID_BOX_HALF;
+    target_angles->box_h = 2 * CENTROID_BOX_HALF;
+
+    float ee_target[3];
+    Hand_Centroid_To_EE_Target(cx, cy, ee_target);
+    IK_Set_Angles(ee_target, target_angles);
 }
 
 /* ========================================================================= */
