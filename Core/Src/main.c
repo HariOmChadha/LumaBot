@@ -24,15 +24,9 @@
 #include "dcmi.h"
 #include "dma.h"
 #include "dma2d.h"
-#include "eth.h"
-#include "fatfs.h"
 #include "i2c.h"
 #include "ltdc.h"
-#include "quadspi.h"
 #include "rtc.h"
-#include "sai.h"
-#include "sdmmc.h"
-#include "spdifrx.h"
 #include "spi.h"
 #include "tim.h"
 #include "usart.h"
@@ -128,16 +122,11 @@ int main(void)
   MX_CRC_Init();
   MX_DCMI_Init();
   MX_DMA2D_Init();
-  MX_ETH_Init();
   MX_FMC_Init();
   MX_I2C1_Init();
   MX_I2C3_Init();
   MX_LTDC_Init();
-  MX_QUADSPI_Init();
   MX_RTC_Init();
-  MX_SAI2_Init();
-  MX_SDMMC1_SD_Init();
-  MX_SPDIFRX_Init();
   MX_SPI2_Init();
   MX_TIM1_Init();
   MX_TIM2_Init();
@@ -147,7 +136,6 @@ int main(void)
   MX_TIM12_Init();
   MX_USART1_UART_Init();
   MX_USART6_UART_Init();
-  MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
   LCD_Wakeup();
   LCD_FillScreen(COLOR_RED);
@@ -241,17 +229,14 @@ void PeriphCommonClock_Config(void)
 
   /** Initializes the peripherals clock
   */
-  PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_LTDC|RCC_PERIPHCLK_SAI2
-                              |RCC_PERIPHCLK_SDMMC1|RCC_PERIPHCLK_CLK48;
+  PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_LTDC|RCC_PERIPHCLK_CLK48;
   PeriphClkInitStruct.PLLSAI.PLLSAIN = 384;
   PeriphClkInitStruct.PLLSAI.PLLSAIR = 5;
   PeriphClkInitStruct.PLLSAI.PLLSAIQ = 2;
   PeriphClkInitStruct.PLLSAI.PLLSAIP = RCC_PLLSAIP_DIV8;
   PeriphClkInitStruct.PLLSAIDivQ = 1;
   PeriphClkInitStruct.PLLSAIDivR = RCC_PLLSAIDIVR_8;
-  PeriphClkInitStruct.Sai2ClockSelection = RCC_SAI2CLKSOURCE_PLLSAI;
   PeriphClkInitStruct.Clk48ClockSelection = RCC_CLK48SOURCE_PLLSAIP;
-  PeriphClkInitStruct.Sdmmc1ClockSelection = RCC_SDMMC1CLKSOURCE_CLK48;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
   {
     Error_Handler();

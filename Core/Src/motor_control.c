@@ -41,4 +41,5 @@ void Motors_Update(MotorAngles_t* cmd) {
             }
         }
     }
+    cmd->is_valid=0;
 }
