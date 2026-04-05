@@ -346,21 +346,19 @@ void StartVisionTask(void *argument) {
 }
 
 void StartMotorTask(void *argument) {
-    MotorAngles_t target_angles;
+    MotorAngles_t incoming_cmd;
     Motors_Start();
 
-//    MotorAngles_t reset_cmd = {0};
-//	reset_cmd.is_valid = 1;
-//	for (int i = 0; i < 5; i++) {
-//		reset_cmd.angles[i] = 90.0f;
-//	}
-//	osMessageQueuePut(motorCmdQueueHandle, &reset_cmd, 0, 0);
-
     for(;;) {
-        // Blocks safely until the Vision Task sends new data
-        if (osMessageQueueGet(motorCmdQueueHandle, &target_angles, NULL, osWaitForever) == osOK) {
-            Motors_Update(&target_angles);
+        // Wait up to 10ms for a new target command.
+        // If a command arrives, it instantly updates the target.
+        // If 10ms passes with no new command, it returns an error and moves to the next line.
+        if (osMessageQueueGet(motorCmdQueueHandle, &incoming_cmd, NULL, 10) == osOK) {
+            Motors_Set_Target(&incoming_cmd);
         }
+
+        // Execute the 100Hz Slew Rate math
+        Motors_Tick();
     }
 }
 

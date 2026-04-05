@@ -7,8 +7,14 @@ extern TIM_HandleTypeDef htim3;
 extern TIM_HandleTypeDef htim5;
 extern TIM_HandleTypeDef htim12;
 
-// The ultimate source of truth for the physical motors
+// The physical reality
 float actual_motor_angles[5] = {90.0f, 90.0f, 90.0f, 90.0f, 90.0f};
+// The destination
+float target_motor_angles[5] = {90.0f, 90.0f, 90.0f, 90.0f, 90.0f};
+
+// SPEED CONTROL: Maximum degrees the motor is allowed to move per RTOS tick
+// (At 100Hz, 1.0f means 100 degrees per second. Lower this to move slower!)
+const float MAX_STEP_SIZE = 0.5f;
 
 void Motors_Start(void) {
     HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);  // PB4
@@ -18,20 +24,34 @@ void Motors_Start(void) {
     HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_4);  // PI0
 }
 
-void Motors_Update(MotorAngles_t* cmd) {
+// Just saves the destination from the RTOS Queue
+void Motors_Set_Target(MotorAngles_t* cmd) {
     if (!cmd->is_valid) return;
+    for (int i = 0; i < 5; i++) {
+        target_motor_angles[i] = cmd->angles[i];
+    }
+}
+
+// Called 100 times a second by the RTOS to smoothly inch the motors forward
+void Motors_Tick(void) {
 
     for (int i = 0; i < 5; i++) {
-        // Check if this specific motor's angle has changed
-        if (actual_motor_angles[i] != cmd->angles[i]) {
+        if (actual_motor_angles[i] != target_motor_angles[i]) {
+            float diff = target_motor_angles[i] - actual_motor_angles[i];
 
-            // 1. Update the global tracking array
-            actual_motor_angles[i] = cmd->angles[i];
+            // Slew Rate Limiter: Step towards the target
+            if (diff > MAX_STEP_SIZE) {
+                actual_motor_angles[i] += MAX_STEP_SIZE;
+            } else if (diff < -MAX_STEP_SIZE) {
+                actual_motor_angles[i] -= MAX_STEP_SIZE;
+            } else {
+                actual_motor_angles[i] = target_motor_angles[i]; // Arrived exactly
+            }
 
-            // 2. Calculate the new PWM pulse width just for this motor
+            // Calculate the new PWM pulse width for this tiny step
             uint32_t pulse_width = 500 + (uint32_t)((actual_motor_angles[i] / 180.0f) * 2000.0f);
 
-            // 3. Update ONLY the corresponding hardware register
+            // Update the hardware register
             switch (i) {
                 case 0: TIM3->CCR1  = pulse_width; break;
                 case 1: TIM1->CCR1  = pulse_width; break;
@@ -41,5 +61,4 @@ void Motors_Update(MotorAngles_t* cmd) {
             }
         }
     }
-    cmd->is_valid=0;
 }

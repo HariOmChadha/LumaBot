@@ -6,5 +6,7 @@
 
 void Motors_Start(void);
 void Motors_Update(MotorAngles_t* cmd);
+void Motors_Tick(void);
+void Motors_Set_Target(MotorAngles_t* cmd);
 
 #endif /* MOTOR_CONTROL_H */
