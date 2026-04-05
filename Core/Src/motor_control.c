@@ -14,7 +14,7 @@ float target_motor_angles[5] = {90.0f, 90.0f, 90.0f, 90.0f, 90.0f};
 
 // SPEED CONTROL: Maximum degrees the motor is allowed to move per RTOS tick
 // (At 100Hz, 1.0f means 100 degrees per second. Lower this to move slower!)
-const float MAX_STEP_SIZE = 1.0f;
+const float MAX_STEP_SIZE = 0.5f;
 
 void Motors_Start(void) {
     HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);  // PB4
