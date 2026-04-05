@@ -611,6 +611,21 @@ void UI_Render_Screen(SystemMode_t current_mode, MotorAngles_t* current_angles, 
 								  COLOR_GREEN, 2);
 			}
 
+            // --- BLOB DEBUG ---
+            extern uint32_t blob_pixels;
+            sprintf(str_buf, "Blob px: %lu", blob_pixels);
+            UI_DrawStringCentered(0, 185, 480, 15, str_buf, COLOR_GREEN, COLOR_BLACK, 1);
+
+            // --- PIXEL SAMPLER: point glove at camera centre, read these values ---
+            if (stable_camBuffer != NULL) {
+                uint16_t px = stable_camBuffer[120 * 320 + 160];  /* centre pixel */
+                uint8_t r = (px >> 11) & 0x1F;
+                uint8_t g = (px >> 5)  & 0x3F;
+                uint8_t b =  px        & 0x1F;
+                sprintf(str_buf, "Centre px  R:%02d G:%02d B:%02d", r, g, b);
+                UI_DrawStringCentered(0, 200, 480, 20, str_buf, COLOR_YELLOW, COLOR_BLACK, 1);
+            }
+
             // --- READS DIRECTLY FROM THE PHYSICAL HARDWARE STATE ---
             sprintf(str_buf, "A1:%03d  A2:%03d  A3:%03d  A4:%03d  A5:%03d",
                 (int)actual_motor_angles[0], (int)actual_motor_angles[1],
