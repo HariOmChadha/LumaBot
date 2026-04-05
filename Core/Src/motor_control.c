@@ -34,11 +34,9 @@ void Motors_Set_Target(MotorAngles_t* cmd) {
 
 // Called 100 times a second by the RTOS to smoothly inch the motors forward
 void Motors_Tick(void) {
-    uint8_t needs_update = 0;
 
     for (int i = 0; i < 5; i++) {
         if (actual_motor_angles[i] != target_motor_angles[i]) {
-            needs_update = 1;
             float diff = target_motor_angles[i] - actual_motor_angles[i];
 
             // Slew Rate Limiter: Step towards the target
