@@ -818,186 +818,186 @@ void UI_Render_Screen(SystemMode_t current_mode, MotorAngles_t *current_angles, 
         UI_DrawString(10, 10, str_buf, COLOR_WHITE, COLOR_BLACK, 1);
         break;
 
-        case MODE_DEBUG:
-        	UI_DrawCamera(60, 60, stable_camBuffer, 1);
-			UI_DrawCamera(260, 60, stable_camBuffer, 1);
-			if (current_angles->is_valid) {
-				UI_DrawHollowRect(260 + (current_angles->box_x / 2),
-								  60 + (current_angles->box_y / 2),
-								  current_angles->box_w / 2,
-								  current_angles->box_h / 2,
-								  COLOR_GREEN, 2);
-			}
-
-			// --- BLOB DEBUG ---
-			extern uint32_t blob_pixels;
-			sprintf(str_buf, "Blob px: %lu", blob_pixels);
-			UI_DrawStringCentered(0, 185, 480, 15, str_buf, COLOR_GREEN, COLOR_BLACK, 1);
-
-			// --- PIXEL SAMPLER: point glove at camera centre, read these values ---
-			if (stable_camBuffer != NULL) {
-				uint16_t px = stable_camBuffer[120 * 320 + 160];  /* centre pixel */
-				uint8_t r = (px >> 11) & 0x1F;
-				uint8_t g = (px >> 5)  & 0x3F;
-				uint8_t b =  px        & 0x1F;
-				sprintf(str_buf, "Centre px  R:%02d G:%02d B:%02d", r, g, b);
-				UI_DrawStringCentered(0, 200, 480, 20, str_buf, COLOR_YELLOW, COLOR_BLACK, 1);
-			}
-
-            // --- READS DIRECTLY FROM THE PHYSICAL HARDWARE STATE ---
-            sprintf(str_buf, "A1:%03d  A2:%03d  A3:%03d  A4:%03d  A5:%03d",
-                (int)actual_motor_angles[0], (int)actual_motor_angles[1],
-                (int)actual_motor_angles[2], (int)actual_motor_angles[3], (int)actual_motor_angles[4]);
-            UI_DrawStringCentered(0, 220, 480, 20, str_buf, COLOR_WHITE, COLOR_BLACK, 1);
-            break;
-
-        case MODE_AUTO:
-        	UI_DrawCamera(120, 40, stable_camBuffer, 2);
-			if (current_angles->is_valid) {
-				UI_DrawHollowRect(120 + (current_angles->box_x * 3 / 4),
-								  40 + (current_angles->box_y * 3 / 4),
-								  current_angles->box_w * 3 / 4,
-								  current_angles->box_h * 3 / 4,
-								  COLOR_GREEN, 2);
-			}
-
-            // --- EE DESIRED POSITION (mm, integer to avoid nano.specs float printf) ---
-            {
-                float ee[3];
-                IK_Get_EE_Pos(ee);
-                int ex = (int)(ee[0] * 1000.0f);
-                int ey = (int)(ee[1] * 1000.0f);
-                int ez = (int)(ee[2] * 1000.0f);
-                sprintf(str_buf, "EE X:%+dmm Y:%+dmm Z:%+dmm", ex, ey, ez);
-                UI_DrawStringCentered(0, 225, 480, 14, str_buf, COLOR_CYAN, COLOR_BLACK, 1);
-            }
-
-            // --- READS DIRECTLY FROM THE PHYSICAL HARDWARE STATE ---
-            sprintf(str_buf, "A1:%03d  A2:%03d  A3:%03d  A4:%03d  A5:%03d",
-                (int)actual_motor_angles[0], (int)actual_motor_angles[1],
-                (int)actual_motor_angles[2], (int)actual_motor_angles[3], (int)actual_motor_angles[4]);
-            UI_DrawStringCentered(0, 240, 480, 12, str_buf, COLOR_WHITE, COLOR_BLACK, 1);
-            break;
-
-        case MODE_MANUAL:
-            for (int i = 0; i < 5; i++) {
-                float angle = Get_Manual_Angle(i);
-                if (angle != previous_slider_angles[i]) {
-                    uint16_t slider_y = 40 + (i * 40);
-                    uint16_t track_c = manual_is_saving ? COLOR_GRAY : COLOR_WHITE;
-                    uint16_t knob_c  = manual_is_saving ? COLOR_DARK_CYAN : COLOR_CYAN;
-
-                    uint16_t new_knob_x = 80 + (uint16_t)((angle / 180.0f) * 320.0f);
-                    if(new_knob_x > 390) new_knob_x = 390;
-
-                    if (previous_slider_angles[i] == -1) {
-                        UI_FillRect(80, slider_y - 10, 350, 30, COLOR_BLACK);
-                        UI_FillRect(80, slider_y, 320, 10, track_c);
-                        UI_FillRect(new_knob_x, slider_y - 10, 20, 30, knob_c);
-                    } else {
-                        uint16_t old_knob_x = 80 + (uint16_t)((previous_slider_angles[i] / 180.0f) * 320.0f);
-                        if(old_knob_x > 390) old_knob_x = 390;
-
-                        if (new_knob_x > old_knob_x) {
-                            UI_FillRect(old_knob_x, slider_y - 10, new_knob_x - old_knob_x, 10, COLOR_BLACK);
-                            UI_FillRect(old_knob_x, slider_y + 10, new_knob_x - old_knob_x, 10, COLOR_BLACK);
-                            UI_FillRect(old_knob_x, slider_y, new_knob_x - old_knob_x, 10, track_c);
-                        } else if (new_knob_x < old_knob_x) {
-                            UI_FillRect(new_knob_x + 20, slider_y - 10, old_knob_x - new_knob_x, 10, COLOR_BLACK);
-                            UI_FillRect(new_knob_x + 20, slider_y + 10, old_knob_x - new_knob_x, 10, COLOR_BLACK);
-                            UI_FillRect(new_knob_x + 20, slider_y, old_knob_x - new_knob_x, 10, track_c);
-                        }
-                        UI_FillRect(new_knob_x, slider_y - 10, 20, 30, knob_c);
-                    }
-
-                    sprintf(str_buf, "%03d", (int)angle);
-                    UI_DrawString(415, slider_y - 2, str_buf, knob_c, COLOR_BLACK, 2);
-                    previous_slider_angles[i] = angle;
-                }
-            }
-            sprintf(str_buf, "A1:%03d  A2:%03d  A3:%03d  A4:%03d  A5:%03d",
-				(int)actual_motor_angles[0], (int)actual_motor_angles[1],
-				(int)actual_motor_angles[2], (int)actual_motor_angles[3], (int)actual_motor_angles[4]);
-            UI_DrawStringCentered(80, 10, 320, 12, str_buf, COLOR_WHITE, COLOR_BLACK, 1);
-
-            if (manual_is_saving == 0) {
-                if (manual_active_preset != last_manual_preset) {
-                    UI_DrawHollowRect(13, 228, 94, 39, COLOR_BLACK, 2);
-                    UI_DrawHollowRect(123, 228, 94, 39, COLOR_BLACK, 2);
-                    UI_DrawHollowRect(233, 228, 94, 39, COLOR_BLACK, 2);
-                    if (manual_active_preset == 1) UI_DrawHollowRect(13, 228, 94, 39, COLOR_WHITE, 2);
-                    if (manual_active_preset == 2) UI_DrawHollowRect(123, 228, 94, 39, COLOR_WHITE, 2);
-                    if (manual_active_preset == 3) UI_DrawHollowRect(233, 228, 94, 39, COLOR_WHITE, 2);
-                    last_manual_preset = manual_active_preset;
-                }
-            } else {
-                last_manual_preset = 255;
-            }
-            break;
-
-        case MODE_TRACKING: {
-            TrackState_t state = Track_Get_State();
-
-            UI_DrawCamera(120, 20, stable_camBuffer, 2);
-            if (current_angles->is_valid) {
-				UI_DrawHollowRect(120 + (current_angles->box_x * 3 / 4),
-								  20 + (current_angles->box_y * 3 / 4),
-								  current_angles->box_w * 3 / 4,
-								  current_angles->box_h * 3 / 4,
-								  COLOR_GREEN, 2);
-			}
-
-            if (state == TRACK_IDLE)           sprintf(str_buf, "-- IDLE --");
-            else if (state == TRACK_TRACKING)  sprintf(str_buf, ">> TRACKING LIVE <<");
-            else if (state == TRACK_RECORDING) sprintf(str_buf, "[REC] RECORDING...");
-            else if (state == TRACK_REPLAYING) sprintf(str_buf, ">> REPLAYING <<");
-            else if (state == TRACK_SAVING)    sprintf(str_buf, "CHOOSE SAVE SLOT");
-
-            UI_DrawStringCentered(120, 5, 240, 10, str_buf, (state == TRACK_IDLE) ? COLOR_WHITE : COLOR_GREEN, COLOR_BLACK, 1);
-
-            // --- READS DIRECTLY FROM THE PHYSICAL HARDWARE STATE ---
-            sprintf(str_buf, "A1:%03d A2:%03d A3:%03d A4:%03d A5:%03d",
-                (int)actual_motor_angles[0], (int)actual_motor_angles[1],
-                (int)actual_motor_angles[2], (int)actual_motor_angles[3], (int)actual_motor_angles[4]);
-            UI_DrawStringCentered(80, 207, 320, 12, str_buf, COLOR_WHITE, COLOR_BLACK, 1);
-
-            if (state == TRACK_IDLE || state == TRACK_SAVING) {
-                if (track_active_preset != last_track_preset) {
-                    UI_DrawHollowRect(83, 223, 94, 39, COLOR_BLACK, 2);
-                    UI_DrawHollowRect(193, 223, 94, 39, COLOR_BLACK, 2);
-                    UI_DrawHollowRect(303, 223, 94, 39, COLOR_BLACK, 2);
-                    if (track_active_preset == 1) UI_DrawHollowRect(83, 223, 94, 39, COLOR_WHITE, 2);
-                    if (track_active_preset == 2) UI_DrawHollowRect(193, 223, 94, 39, COLOR_WHITE, 2);
-                    if (track_active_preset == 3) UI_DrawHollowRect(303, 223, 94, 39, COLOR_WHITE, 2);
-                    last_track_preset = track_active_preset;
-                }
-            } else {
-                last_track_preset = 255;
-            }
-            break;
+    case MODE_DEBUG:
+        UI_DrawCamera(60, 60, stable_camBuffer, 1);
+        UI_DrawCamera(260, 60, stable_camBuffer, 1);
+        if (current_angles->is_valid) {
+            UI_DrawHollowRect(260 + (current_angles->box_x / 2),
+                                60 + (current_angles->box_y / 2),
+                                current_angles->box_w / 2,
+                                current_angles->box_h / 2,
+                                COLOR_GREEN, 2);
         }
 
+        // --- BLOB DEBUG ---
         extern uint32_t blob_pixels;
         sprintf(str_buf, "Blob px: %lu", blob_pixels);
         UI_DrawStringCentered(0, 185, 480, 15, str_buf, COLOR_GREEN, COLOR_BLACK, 1);
 
-        // samples pixels from glove
-        if (stable_camBuffer != NULL)
-        {
-            uint16_t px = stable_camBuffer[120 * 320 + 160]; // center pixel
+        // --- PIXEL SAMPLER: point glove at camera centre, read these values ---
+        if (stable_camBuffer != NULL) {
+            uint16_t px = stable_camBuffer[120 * 320 + 160];  /* centre pixel */
             uint8_t r = (px >> 11) & 0x1F;
-            uint8_t g = (px >> 5) & 0x3F;
-            uint8_t b = px & 0x1F;
+            uint8_t g = (px >> 5)  & 0x3F;
+            uint8_t b =  px        & 0x1F;
             sprintf(str_buf, "Centre px  R:%02d G:%02d B:%02d", r, g, b);
             UI_DrawStringCentered(0, 200, 480, 20, str_buf, COLOR_YELLOW, COLOR_BLACK, 1);
         }
 
-        // read physical hardware state
+        // --- READS DIRECTLY FROM THE PHYSICAL HARDWARE STATE ---
         sprintf(str_buf, "A1:%03d  A2:%03d  A3:%03d  A4:%03d  A5:%03d",
-                (int)actual_motor_angles[0], (int)actual_motor_angles[1],
-                (int)actual_motor_angles[2], (int)actual_motor_angles[3], (int)actual_motor_angles[4]);
+            (int)actual_motor_angles[0], (int)actual_motor_angles[1],
+            (int)actual_motor_angles[2], (int)actual_motor_angles[3], (int)actual_motor_angles[4]);
         UI_DrawStringCentered(0, 220, 480, 20, str_buf, COLOR_WHITE, COLOR_BLACK, 1);
         break;
+
+        // case MODE_AUTO:
+        // 	UI_DrawCamera(120, 40, stable_camBuffer, 2);
+		// 	if (current_angles->is_valid) {
+		// 		UI_DrawHollowRect(120 + (current_angles->box_x * 3 / 4),
+		// 						  40 + (current_angles->box_y * 3 / 4),
+		// 						  current_angles->box_w * 3 / 4,
+		// 						  current_angles->box_h * 3 / 4,
+		// 						  COLOR_GREEN, 2);
+		// 	}
+
+        //     // --- EE DESIRED POSITION (mm, integer to avoid nano.specs float printf) ---
+        //     {
+        //         float ee[3];
+        //         IK_Get_EE_Pos(ee);
+        //         int ex = (int)(ee[0] * 1000.0f);
+        //         int ey = (int)(ee[1] * 1000.0f);
+        //         int ez = (int)(ee[2] * 1000.0f);
+        //         sprintf(str_buf, "EE X:%+dmm Y:%+dmm Z:%+dmm", ex, ey, ez);
+        //         UI_DrawStringCentered(0, 225, 480, 14, str_buf, COLOR_CYAN, COLOR_BLACK, 1);
+        //     }
+
+        //     // --- READS DIRECTLY FROM THE PHYSICAL HARDWARE STATE ---
+        //     sprintf(str_buf, "A1:%03d  A2:%03d  A3:%03d  A4:%03d  A5:%03d",
+        //         (int)actual_motor_angles[0], (int)actual_motor_angles[1],
+        //         (int)actual_motor_angles[2], (int)actual_motor_angles[3], (int)actual_motor_angles[4]);
+        //     UI_DrawStringCentered(0, 240, 480, 12, str_buf, COLOR_WHITE, COLOR_BLACK, 1);
+        //     break;
+
+        // case MODE_MANUAL:
+        //     for (int i = 0; i < 5; i++) {
+        //         float angle = Get_Manual_Angle(i);
+        //         if (angle != previous_slider_angles[i]) {
+        //             uint16_t slider_y = 40 + (i * 40);
+        //             uint16_t track_c = manual_is_saving ? COLOR_GRAY : COLOR_WHITE;
+        //             uint16_t knob_c  = manual_is_saving ? COLOR_DARK_CYAN : COLOR_CYAN;
+
+        //             uint16_t new_knob_x = 80 + (uint16_t)((angle / 180.0f) * 320.0f);
+        //             if(new_knob_x > 390) new_knob_x = 390;
+
+        //             if (previous_slider_angles[i] == -1) {
+        //                 UI_FillRect(80, slider_y - 10, 350, 30, COLOR_BLACK);
+        //                 UI_FillRect(80, slider_y, 320, 10, track_c);
+        //                 UI_FillRect(new_knob_x, slider_y - 10, 20, 30, knob_c);
+        //             } else {
+        //                 uint16_t old_knob_x = 80 + (uint16_t)((previous_slider_angles[i] / 180.0f) * 320.0f);
+        //                 if(old_knob_x > 390) old_knob_x = 390;
+
+        //                 if (new_knob_x > old_knob_x) {
+        //                     UI_FillRect(old_knob_x, slider_y - 10, new_knob_x - old_knob_x, 10, COLOR_BLACK);
+        //                     UI_FillRect(old_knob_x, slider_y + 10, new_knob_x - old_knob_x, 10, COLOR_BLACK);
+        //                     UI_FillRect(old_knob_x, slider_y, new_knob_x - old_knob_x, 10, track_c);
+        //                 } else if (new_knob_x < old_knob_x) {
+        //                     UI_FillRect(new_knob_x + 20, slider_y - 10, old_knob_x - new_knob_x, 10, COLOR_BLACK);
+        //                     UI_FillRect(new_knob_x + 20, slider_y + 10, old_knob_x - new_knob_x, 10, COLOR_BLACK);
+        //                     UI_FillRect(new_knob_x + 20, slider_y, old_knob_x - new_knob_x, 10, track_c);
+        //                 }
+        //                 UI_FillRect(new_knob_x, slider_y - 10, 20, 30, knob_c);
+        //             }
+
+        //             sprintf(str_buf, "%03d", (int)angle);
+        //             UI_DrawString(415, slider_y - 2, str_buf, knob_c, COLOR_BLACK, 2);
+        //             previous_slider_angles[i] = angle;
+        //         }
+        //     }
+        //     sprintf(str_buf, "A1:%03d  A2:%03d  A3:%03d  A4:%03d  A5:%03d",
+		// 		(int)actual_motor_angles[0], (int)actual_motor_angles[1],
+		// 		(int)actual_motor_angles[2], (int)actual_motor_angles[3], (int)actual_motor_angles[4]);
+        //     UI_DrawStringCentered(80, 10, 320, 12, str_buf, COLOR_WHITE, COLOR_BLACK, 1);
+
+        //     if (manual_is_saving == 0) {
+        //         if (manual_active_preset != last_manual_preset) {
+        //             UI_DrawHollowRect(13, 228, 94, 39, COLOR_BLACK, 2);
+        //             UI_DrawHollowRect(123, 228, 94, 39, COLOR_BLACK, 2);
+        //             UI_DrawHollowRect(233, 228, 94, 39, COLOR_BLACK, 2);
+        //             if (manual_active_preset == 1) UI_DrawHollowRect(13, 228, 94, 39, COLOR_WHITE, 2);
+        //             if (manual_active_preset == 2) UI_DrawHollowRect(123, 228, 94, 39, COLOR_WHITE, 2);
+        //             if (manual_active_preset == 3) UI_DrawHollowRect(233, 228, 94, 39, COLOR_WHITE, 2);
+        //             last_manual_preset = manual_active_preset;
+        //         }
+        //     } else {
+        //         last_manual_preset = 255;
+        //     }
+        //     break;
+
+        // case MODE_TRACKING: {
+        //     TrackState_t state = Track_Get_State();
+
+        //     UI_DrawCamera(120, 20, stable_camBuffer, 2);
+        //     if (current_angles->is_valid) {
+		// 		UI_DrawHollowRect(120 + (current_angles->box_x * 3 / 4),
+		// 						  20 + (current_angles->box_y * 3 / 4),
+		// 						  current_angles->box_w * 3 / 4,
+		// 						  current_angles->box_h * 3 / 4,
+		// 						  COLOR_GREEN, 2);
+		// 	}
+
+        //     if (state == TRACK_IDLE)           sprintf(str_buf, "-- IDLE --");
+        //     else if (state == TRACK_TRACKING)  sprintf(str_buf, ">> TRACKING LIVE <<");
+        //     else if (state == TRACK_RECORDING) sprintf(str_buf, "[REC] RECORDING...");
+        //     else if (state == TRACK_REPLAYING) sprintf(str_buf, ">> REPLAYING <<");
+        //     else if (state == TRACK_SAVING)    sprintf(str_buf, "CHOOSE SAVE SLOT");
+
+        //     UI_DrawStringCentered(120, 5, 240, 10, str_buf, (state == TRACK_IDLE) ? COLOR_WHITE : COLOR_GREEN, COLOR_BLACK, 1);
+
+        //     // --- READS DIRECTLY FROM THE PHYSICAL HARDWARE STATE ---
+        //     sprintf(str_buf, "A1:%03d A2:%03d A3:%03d A4:%03d A5:%03d",
+        //         (int)actual_motor_angles[0], (int)actual_motor_angles[1],
+        //         (int)actual_motor_angles[2], (int)actual_motor_angles[3], (int)actual_motor_angles[4]);
+        //     UI_DrawStringCentered(80, 207, 320, 12, str_buf, COLOR_WHITE, COLOR_BLACK, 1);
+
+        //     if (state == TRACK_IDLE || state == TRACK_SAVING) {
+        //         if (track_active_preset != last_track_preset) {
+        //             UI_DrawHollowRect(83, 223, 94, 39, COLOR_BLACK, 2);
+        //             UI_DrawHollowRect(193, 223, 94, 39, COLOR_BLACK, 2);
+        //             UI_DrawHollowRect(303, 223, 94, 39, COLOR_BLACK, 2);
+        //             if (track_active_preset == 1) UI_DrawHollowRect(83, 223, 94, 39, COLOR_WHITE, 2);
+        //             if (track_active_preset == 2) UI_DrawHollowRect(193, 223, 94, 39, COLOR_WHITE, 2);
+        //             if (track_active_preset == 3) UI_DrawHollowRect(303, 223, 94, 39, COLOR_WHITE, 2);
+        //             last_track_preset = track_active_preset;
+        //         }
+        //     } else {
+        //         last_track_preset = 255;
+        //     }
+        //     break;
+        // }
+
+        // extern uint32_t blob_pixels;
+        // sprintf(str_buf, "Blob px: %lu", blob_pixels);
+        // UI_DrawStringCentered(0, 185, 480, 15, str_buf, COLOR_GREEN, COLOR_BLACK, 1);
+
+        // // samples pixels from glove
+        // if (stable_camBuffer != NULL)
+        // {
+        //     uint16_t px = stable_camBuffer[120 * 320 + 160]; // center pixel
+        //     uint8_t r = (px >> 11) & 0x1F;
+        //     uint8_t g = (px >> 5) & 0x3F;
+        //     uint8_t b = px & 0x1F;
+        //     sprintf(str_buf, "Centre px  R:%02d G:%02d B:%02d", r, g, b);
+        //     UI_DrawStringCentered(0, 200, 480, 20, str_buf, COLOR_YELLOW, COLOR_BLACK, 1);
+        // }
+
+        // // read physical hardware state
+        // sprintf(str_buf, "A1:%03d  A2:%03d  A3:%03d  A4:%03d  A5:%03d",
+        //         (int)actual_motor_angles[0], (int)actual_motor_angles[1],
+        //         (int)actual_motor_angles[2], (int)actual_motor_angles[3], (int)actual_motor_angles[4]);
+        // UI_DrawStringCentered(0, 220, 480, 20, str_buf, COLOR_WHITE, COLOR_BLACK, 1);
+        // break;
 
     case MODE_AUTO:
         UI_DrawCamera(120, 40, stable_camBuffer, 2);
