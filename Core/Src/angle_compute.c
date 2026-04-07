@@ -169,12 +169,12 @@ static const float IK_JOINT_RPY[5][3] = {  /* [roll, pitch, yaw] */
     {-1.5707f,  -1.5707f,  -1.5707f  },
     { 1.5707f,  -1.5707f,   1.5707f  },
 };
-static const float IK_EE_XYZ[3]    = { 0.025f, 0.0f, 0.0f };
+static const float IK_EE_XYZ[3]    = { 0.030f, 0.0f, 0.0f };
 static const float IK_Q_LOWER[5]   = {-1.5707f, -1.5707f, -1.5707f, -0.1f, -1.5707f};
 static const float IK_Q_UPPER[5]   = { 1.5707f,  1.5707f,  1.5707f,  0.1f,  1.5707f};
 
 #define CCD_MAX_ITER   100
-#define CCD_TOL        0.005f   /* 5 mm position tolerance */
+#define CCD_TOL        0.008f   /* 5 mm position tolerance */
 
 /* Persistent joint angles — warm-start each CCD call from last solution */
 static float ik_q[5] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
@@ -230,11 +230,14 @@ static void ik_cross3(const float a[3], const float b[3], float out[3]) {
 /* Forward kinematics.
  * joint_pos[i]  = world-space pivot position of joint i (before q[i] rotation)
  * joint_axis[i] = world-space Z rotation axis of joint i (before q[i] rotation)
- * ee_pos        = world-space end-effector position */
+ * ee_pos        = world-space end-effector position
+ * ee_x          = EE X axis in world (column 0 — camera forward / optical axis)
+ * ee_heading    = EE Z axis in world (column 2 — camera left) */
 static void IK_FK(const float q[5],
                   float joint_pos[5][3],
                   float joint_axis[5][3],
                   float ee_pos[3],
+                  float ee_x[3],
                   float ee_heading[3])
 {
     IK_Mat4_t T = ik_mat4_identity();
@@ -259,31 +262,28 @@ static void IK_FK(const float q[5],
     ee_pos[0] = T.m[0][3] + T.m[0][0]*IK_EE_XYZ[0] + T.m[0][1]*IK_EE_XYZ[1] + T.m[0][2]*IK_EE_XYZ[2];
     ee_pos[1] = T.m[1][3] + T.m[1][0]*IK_EE_XYZ[0] + T.m[1][1]*IK_EE_XYZ[1] + T.m[1][2]*IK_EE_XYZ[2];
     ee_pos[2] = T.m[2][3] + T.m[2][0]*IK_EE_XYZ[0] + T.m[2][1]*IK_EE_XYZ[1] + T.m[2][2]*IK_EE_XYZ[2];
+    ee_x[0] = T.m[0][0];  ee_x[1] = T.m[1][0];  ee_x[2] = T.m[2][0];   /* col 0 */
     ee_heading[0] = T.m[0][2];
     ee_heading[1] = T.m[1][2];
     ee_heading[2] = T.m[2][2];
 }
 
-/* CCD solver — position + optional Z-axis orientation.
+/* CCD solver — position + optional EE X-axis orientation hold.
  *
- * target_pos     : desired EE world position
- * target_z       : desired EE Z-axis direction (unit vector), or NULL to skip
- * ori_weight     : 0.0 = position only, 1.0 = orientation only, 0.3 = typical blend
- *
- * Per joint, the total angle correction is:
- *   angle = (1 - ori_weight) * pos_angle  +  ori_weight * ori_angle
- * Both corrections use identical CCD geometry — project vectors onto the plane
- * perpendicular to the joint axis, compute signed angle between them. */
+ * target_pos  : desired EE world position
+ * target_x    : desired EE X-axis direction (camera fwd), or NULL to skip
+ * x_weight    : 0.0 = position only, 1.0 = orientation only (0.4 typical) */
 static void IK_CCD_Solve(const float target_pos[3],
-                         const float target_z[3],
-                         float ori_weight) {
+                         const float target_x[3],
+                         float x_weight) {
     float joint_pos[5][3];
     float joint_axis[5][3];
     float ee_pos[3];
+    float ee_x[3];
     float ee_heading[3];
 
     for (int iter = 0; iter < CCD_MAX_ITER; iter++) {
-        IK_FK(ik_q, joint_pos, joint_axis, ee_pos, ee_heading);
+        IK_FK(ik_q, joint_pos, joint_axis, ee_pos, ee_x, ee_heading);
 
         float dx = ee_pos[0] - target_pos[0];
         float dy = ee_pos[1] - target_pos[1];
@@ -291,7 +291,7 @@ static void IK_CCD_Solve(const float target_pos[3],
         if (dx*dx + dy*dy + dz*dz < CCD_TOL*CCD_TOL) break;
 
         for (int i = 4; i >= 0; i--) {
-            IK_FK(ik_q, joint_pos, joint_axis, ee_pos, ee_heading);
+            IK_FK(ik_q, joint_pos, joint_axis, ee_pos, ee_x, ee_heading);
             const float *ax = joint_axis[i];
 
             /* --- Position correction --- */
@@ -318,17 +318,17 @@ static void IK_CCD_Solve(const float target_pos[3],
                 pos_angle = atan2f(sin_a, cos_a);
             }
 
-            /* --- Orientation correction (EE Z-axis toward target_z) --- */
+            /* --- X-axis orientation hold (keep camera heading fixed) --- */
             float ori_angle = 0.0f;
-            if (target_z != NULL && ori_weight > 1e-6f) {
-                float d_cur = ik_dot3(ee_heading, ax);
-                float d_des = ik_dot3(target_z,   ax);
-                float perp_cur[3] = { ee_heading[0] - d_cur*ax[0],
-                                       ee_heading[1] - d_cur*ax[1],
-                                       ee_heading[2] - d_cur*ax[2] };
-                float perp_des[3] = { target_z[0]   - d_des*ax[0],
-                                       target_z[1]   - d_des*ax[1],
-                                       target_z[2]   - d_des*ax[2] };
+            if (target_x != NULL && x_weight > 1e-6f) {
+                float d_cur = ik_dot3(ee_x,    ax);
+                float d_des = ik_dot3(target_x, ax);
+                float perp_cur[3] = { ee_x[0]     - d_cur*ax[0],
+                                       ee_x[1]     - d_cur*ax[1],
+                                       ee_x[2]     - d_cur*ax[2] };
+                float perp_des[3] = { target_x[0] - d_des*ax[0],
+                                       target_x[1] - d_des*ax[1],
+                                       target_x[2] - d_des*ax[2] };
                 float len_cur = sqrtf(ik_dot3(perp_cur, perp_cur));
                 float len_des = sqrtf(ik_dot3(perp_des, perp_des));
                 if (len_cur > 1e-6f && len_des > 1e-6f) {
@@ -340,9 +340,7 @@ static void IK_CCD_Solve(const float target_pos[3],
                 }
             }
 
-            float angle = (1.0f - ori_weight) * pos_angle
-                        +          ori_weight  * ori_angle;
-
+            float angle = (1.0f - x_weight) * pos_angle + x_weight * ori_angle;
             ik_q[i] += angle;
             if (ik_q[i] < IK_Q_LOWER[i]) ik_q[i] = IK_Q_LOWER[i];
             if (ik_q[i] > IK_Q_UPPER[i]) ik_q[i] = IK_Q_UPPER[i];
@@ -412,7 +410,7 @@ static uint8_t Blob_Detect(uint16_t* buffer, float* out_cx, float* out_cy) {
  * Fixed overhead EE position for MODE_TRACKING (metres).
  * Assumed hand depth for MODE_TRACKING pointing direction.
  * ------------------------------------------------------------------------- */
-#define AUTO_STEP_GAIN   0.00003f   /* m per pixel — MODE_AUTO position step   */
+#define AUTO_STEP_GAIN   0.0005f   /* m per pixel — MODE_AUTO position step   */
 #define LAMP_ORI_GAIN    0.005f    /* rad per pixel — MODE_TRACKING tilt gain  */
 #define LAMP_POS_Z       0.30f     /* target overhead Z height (m)             */
 #define LAMP_CENTRE_X    0.0f      /* fallback X when arm can't reach height   */
@@ -437,11 +435,11 @@ static uint8_t Blob_Detect(uint16_t* buffer, float* out_cx, float* out_cy) {
 static void IK_Set_Angles(float cx, float cy, SystemMode_t mode,
                            MotorAngles_t *output_angles) {
 
-    /* Run FK once to get current EE pose */
-    float joint_pos[5][3], joint_axis[5][3], ee_pos[3], ee_z[3];
-    IK_FK(ik_q, joint_pos, joint_axis, ee_pos, ee_z);
+    /* Run FK once to get current EE pose and all three axes */
+    float joint_pos[5][3], joint_axis[5][3], ee_pos[3], ee_x_axis[3], ee_z[3];
+    IK_FK(ik_q, joint_pos, joint_axis, ee_pos, ee_x_axis, ee_z);
 
-    /* Also need EE X and Y axes — recompute full FK transform */
+    /* EE Y axis from the same transform (column 1) — reuse the loop */
     IK_Mat4_t T = ik_mat4_identity();
     for (int i = 0; i < 5; i++) {
         IK_Mat4_t off = ik_mat4_from_origin(
@@ -451,8 +449,20 @@ static void IK_Set_Angles(float cx, float cy, SystemMode_t mode,
         IK_Mat4_t Rz = ik_mat4_rotz(ik_q[i]);
         T = ik_mat4_mul(&T, &Rz);
     }
-    float ee_x_axis[3] = { T.m[0][0], T.m[1][0], T.m[2][0] };
     float ee_y_axis[3] = { T.m[0][1], T.m[1][1], T.m[2][1] };
+
+    /* Locked EE X direction for MODE_AUTO — set once on first call, then held */
+    static float locked_x[3] = {0};
+    static uint8_t has_lock   = 0;
+    static SystemMode_t last_mode = (SystemMode_t)-1;
+    if (mode == MODE_AUTO && last_mode != MODE_AUTO) {
+        /* Entering MODE_AUTO: snapshot current EE X axis as the heading to hold */
+        locked_x[0] = ee_x_axis[0];
+        locked_x[1] = ee_x_axis[1];
+        locked_x[2] = ee_x_axis[2];
+        has_lock = 0;
+    }
+    last_mode = mode;
 
     if (mode == MODE_TRACKING) {
         /* ------------------------------------------------------------------
@@ -487,40 +497,50 @@ static void IK_Set_Angles(float cx, float cy, SystemMode_t mode,
          * First try with X/Y unchanged. If CCD doesn't converge (EE stays
          * far from target), pull X/Y back toward a neutral position. */
         float lamp[3] = { ee_pos[0], ee_pos[1], LAMP_POS_Z };
-        IK_CCD_Solve(lamp, dz, 1.0f);
+        IK_CCD_Solve(lamp, NULL, 0.0f);   /* position only for lamp height */
 
         /* Check convergence — if EE is still far from the target Z,
          * relax X and Y toward centre so the arm can reach the height. */
-        float jp[5][3], ja[5][3], ep[3], ez[3];
-        IK_FK(ik_q, jp, ja, ep, ez);
+        float jp[5][3], ja[5][3], ep[3], ex[3], ez2[3];
+        IK_FK(ik_q, jp, ja, ep, ex, ez2);
         float z_err = ep[2] - LAMP_POS_Z;
         if (z_err * z_err > CCD_TOL * CCD_TOL) {
-            /* Nudge X/Y toward the reachable overhead centre */
             lamp[0] = ee_pos[0] * 0.9f + LAMP_CENTRE_X * 0.1f;
             lamp[1] = ee_pos[1] * 0.9f + LAMP_CENTRE_Y * 0.1f;
-            IK_CCD_Solve(lamp, dz, 1.0f);
+            IK_CCD_Solve(lamp, NULL, 0.0f);
         }
 
     } else {
         /* ------------------------------------------------------------------
          * STANDARD TRACKING: nudge EE position in image plane each frame.
-         * err_x > 0 → hand right of centre → step EE along +ee_x_axis
-         * err_y > 0 → hand below centre   → step EE along -ee_y_axis
+         *
+         * EE frame (confirmed from visualisation):
+         *   ee_x_axis (col 0) = camera forward  (optical axis)
+         *   ee_y_axis (col 1) = camera down
+         *   ee_z / heading    = camera left
+         *
+         * Image-plane directions in world space:
+         *   camera right = -ee_z  (Z points left, so right = -Z)
+         *   camera down  = +ee_y_axis
+         *
+         * err_x > 0 → hand right of centre → step along camera right = -ee_z
+         * err_y > 0 → hand below  centre   → step along camera down  = +ee_y_axis
          * ------------------------------------------------------------------ */
         float err_x =  (cx - 160.0f);
         float err_y =  (cy - 120.0f);
 
         float target[3] = {
-            ee_pos[0] + AUTO_STEP_GAIN * (err_x * ee_x_axis[0] - err_y * ee_y_axis[0]),
-            ee_pos[1] + AUTO_STEP_GAIN * (err_x * ee_x_axis[1] - err_y * ee_y_axis[1]),
-            ee_pos[2] + AUTO_STEP_GAIN * (err_x * ee_x_axis[2] - err_y * ee_y_axis[2]),
+            ee_pos[0] + AUTO_STEP_GAIN * (-err_x * ee_z[0] + err_y * ee_y_axis[0]),
+            ee_pos[1] + AUTO_STEP_GAIN * (-err_x * ee_z[1] + err_y * ee_y_axis[1]),
+            ee_pos[2] + AUTO_STEP_GAIN * (-err_x * ee_z[2] + err_y * ee_y_axis[2]),
         };
 
-        IK_CCD_Solve(target, NULL, 0.0f);   /* position only, no orientation */
+        /* Hold camera heading (EE X axis) while tracking position */
+        IK_CCD_Solve(target, has_lock ? locked_x : NULL, 0.4f);
     }
 
     for (int i = 0; i < 5; i++) {
-        output_angles->angles[i] = ik_q[i] * (180.0f / 3.14159265f)+90.0f;
+        output_angles->angles[i] = ik_q[i] * (180.0f / 3.14159265f) + 90.0f;
     }
     output_angles->is_valid = 1;
 }
@@ -573,7 +593,7 @@ static void CV_Pipeline(uint16_t* target_buffer, MotorAngles_t* target_angles, S
             target_angles->box_y = (uint16_t)(avg_cy > CENTROID_BOX_HALF ? avg_cy - CENTROID_BOX_HALF : 0);
             target_angles->box_w = 2 * CENTROID_BOX_HALF;
             target_angles->box_h = 2 * CENTROID_BOX_HALF;
-            target_angles->is_valid = 0;
+            target_angles->is_valid = 1;
             return;
         }
     }
