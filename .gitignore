@@ -21,3 +21,8 @@ build/
 # 4. OS Generated Files
 .DS_Store
 Thumbs.db
+
+# python env
+luma/
+
+# 
