@@ -471,11 +471,16 @@ void UI_Process_Touch(uint16_t touch_x, uint16_t touch_y, uint8_t is_touching) {
 				}
 
 				if (state == TRACK_IDLE) {
-					if (Is_Touch_In_Box(touch_x, touch_y, 85, 225, 90, 35))  { Track_Load_Preset(1); track_active_preset = 1; hit_track_btn = 1; }
-					if (Is_Touch_In_Box(touch_x, touch_y, 195, 225, 90, 35)) { Track_Load_Preset(2); track_active_preset = 2; hit_track_btn = 1; }
-					if (Is_Touch_In_Box(touch_x, touch_y, 305, 225, 90, 35)) { Track_Load_Preset(3); track_active_preset = 3; hit_track_btn = 1; }
+					// 1. ADD needs_full_redraw = 1 to all three preset buttons
+					if (Is_Touch_In_Box(touch_x, touch_y, 85, 225, 90, 35))  { Track_Load_Preset(1); track_active_preset = 1; hit_track_btn = 1; needs_full_redraw = 1; }
+					if (Is_Touch_In_Box(touch_x, touch_y, 195, 225, 90, 35)) { Track_Load_Preset(2); track_active_preset = 2; hit_track_btn = 1; needs_full_redraw = 1; }
+					if (Is_Touch_In_Box(touch_x, touch_y, 305, 225, 90, 35)) { Track_Load_Preset(3); track_active_preset = 3; hit_track_btn = 1; needs_full_redraw = 1; }
 
 					if (!hit_track_btn) {
+						// 2. Force a redraw if we are un-selecting a preset so REPLAY turns gray again
+						if (track_active_preset != 0) {
+							needs_full_redraw = 1;
+						}
 						track_active_preset = 0;
 						Track_Clear_Loaded_Preset();
 					}
@@ -534,10 +539,10 @@ void UI_Render_Screen(SystemMode_t current_mode, MotorAngles_t* current_angles, 
 				break;
 
             case MODE_DEBUG:
-                UI_DrawStringCentered(60, 45, 160, 20, "RAW SENSOR", COLOR_WHITE, COLOR_BLACK, 1);
-                UI_DrawStringCentered(260, 45, 160, 20, "CV OUTPUT", COLOR_WHITE, COLOR_BLACK, 1);
-                UI_DrawHollowRect(59, 79, 162, 122, COLOR_WHITE, 1);
-                UI_DrawHollowRect(259, 79, 162, 122, COLOR_WHITE, 1);
+                UI_DrawStringCentered(60, 35, 160, 20, "RAW SENSOR", COLOR_WHITE, COLOR_BLACK, 1);
+                UI_DrawStringCentered(260, 35, 160, 20, "CV OUTPUT", COLOR_WHITE, COLOR_BLACK, 1);
+                UI_DrawHollowRect(59, 59, 162, 122, COLOR_WHITE, 1);
+                UI_DrawHollowRect(259, 59, 162, 122, COLOR_WHITE, 1);
                 break;
 
             case MODE_AUTO:
@@ -601,30 +606,30 @@ void UI_Render_Screen(SystemMode_t current_mode, MotorAngles_t* current_angles, 
             break;
 
         case MODE_DEBUG:
-        	UI_DrawCamera(60, 80, stable_camBuffer, 1);
-			UI_DrawCamera(260, 80, stable_camBuffer, 1);
+        	UI_DrawCamera(60, 60, stable_camBuffer, 1);
+			UI_DrawCamera(260, 60, stable_camBuffer, 1);
 			if (current_angles->is_valid) {
 				UI_DrawHollowRect(260 + (current_angles->box_x / 2),
-								  80 + (current_angles->box_y / 2),
+								  60 + (current_angles->box_y / 2),
 								  current_angles->box_w / 2,
 								  current_angles->box_h / 2,
 								  COLOR_GREEN, 2);
 			}
 
-            // --- BLOB DEBUG ---
-            extern uint32_t blob_pixels;
-            sprintf(str_buf, "Blob px: %lu", blob_pixels);
-            UI_DrawStringCentered(0, 185, 480, 15, str_buf, COLOR_GREEN, COLOR_BLACK, 1);
+			// --- BLOB DEBUG ---
+			extern uint32_t blob_pixels;
+			sprintf(str_buf, "Blob px: %lu", blob_pixels);
+			UI_DrawStringCentered(0, 185, 480, 15, str_buf, COLOR_GREEN, COLOR_BLACK, 1);
 
-            // --- PIXEL SAMPLER: point glove at camera centre, read these values ---
-            if (stable_camBuffer != NULL) {
-                uint16_t px = stable_camBuffer[120 * 320 + 160];  /* centre pixel */
-                uint8_t r = (px >> 11) & 0x1F;
-                uint8_t g = (px >> 5)  & 0x3F;
-                uint8_t b =  px        & 0x1F;
-                sprintf(str_buf, "Centre px  R:%02d G:%02d B:%02d", r, g, b);
-                UI_DrawStringCentered(0, 200, 480, 20, str_buf, COLOR_YELLOW, COLOR_BLACK, 1);
-            }
+			// --- PIXEL SAMPLER: point glove at camera centre, read these values ---
+			if (stable_camBuffer != NULL) {
+				uint16_t px = stable_camBuffer[120 * 320 + 160];  /* centre pixel */
+				uint8_t r = (px >> 11) & 0x1F;
+				uint8_t g = (px >> 5)  & 0x3F;
+				uint8_t b =  px        & 0x1F;
+				sprintf(str_buf, "Centre px  R:%02d G:%02d B:%02d", r, g, b);
+				UI_DrawStringCentered(0, 200, 480, 20, str_buf, COLOR_YELLOW, COLOR_BLACK, 1);
+			}
 
             // --- READS DIRECTLY FROM THE PHYSICAL HARDWARE STATE ---
             sprintf(str_buf, "A1:%03d  A2:%03d  A3:%03d  A4:%03d  A5:%03d",
