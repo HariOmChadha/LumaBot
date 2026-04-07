@@ -58,4 +58,7 @@ void Track_Load_Preset(uint8_t preset_slot);
 /* --- Main Compute Entry Point --- */
 void Compute_Motor_Angles(SystemMode_t current_mode, uint16_t* raw_frame_buffer, uint16_t* debug_frame_buffer, MotorAngles_t* output_angles);
 
+/* --- IK Debug --- */
+void IK_Get_EE_Pos(float out[3]);   /* returns last computed EE position (metres) */
+
 #endif /* ANGLE_COMPUTE_H */

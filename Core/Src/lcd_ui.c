@@ -643,6 +643,17 @@ void UI_Render_Screen(SystemMode_t current_mode, MotorAngles_t* current_angles, 
 								  COLOR_GREEN, 2);
 			}
 
+            // --- EE DESIRED POSITION (mm, integer to avoid nano.specs float printf) ---
+            {
+                float ee[3];
+                IK_Get_EE_Pos(ee);
+                int ex = (int)(ee[0] * 1000.0f);
+                int ey = (int)(ee[1] * 1000.0f);
+                int ez = (int)(ee[2] * 1000.0f);
+                sprintf(str_buf, "EE X:%+dmm Y:%+dmm Z:%+dmm", ex, ey, ez);
+                UI_DrawStringCentered(0, 225, 480, 14, str_buf, COLOR_CYAN, COLOR_BLACK, 1);
+            }
+
             // --- READS DIRECTLY FROM THE PHYSICAL HARDWARE STATE ---
             sprintf(str_buf, "A1:%03d  A2:%03d  A3:%03d  A4:%03d  A5:%03d",
                 (int)actual_motor_angles[0], (int)actual_motor_angles[1],
