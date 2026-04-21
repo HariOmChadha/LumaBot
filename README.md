@@ -6,6 +6,9 @@
 
 LumaBot acts as an intelligent desktop companion. Using an onboard camera and computer vision, it understands its environment and physically moves its light source to optimize visibility for the user. Whether you need autonomous shadow elimination while writing, or a lamp that remembers your exact preferred lighting angles, LumaBot adapts to your workflow.
 
+[Read the Full LumaBot Project Report](./LumaBot%20Report.pdf)
+[Watch the LumaBot Demonstration Video on YouTube](https://www.youtube.com/shorts/-PhczdBarbQ)
+
 ### 🎮 Operating Modes & Capabilities
 
 The robotic lamp is controlled via a custom-built, hardware-accelerated touchscreen interface, offering four distinct modes:
